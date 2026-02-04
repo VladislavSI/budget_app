@@ -347,6 +347,11 @@ def render_kpi_cards(df: pd.DataFrame, period_label: str):
     net_balance = total_income - total_expenses
     savings_rate = (net_balance / total_income * 100) if total_income > 0 else 0
     
+    # Debug: show calculation details
+    income_count = len(df[df['Amount'] > 0])
+    expense_count = len(df[df['Amount'] < 0])
+    st.info(f"KPI Debug: {income_count} income transactions = €{total_income:.2f}, {expense_count} expense transactions = €{total_expenses:.2f}")
+    
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
