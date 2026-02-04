@@ -133,28 +133,38 @@ def load_budget_data(_client, spreadsheet_id: str) -> pd.DataFrame:
     
     Maps to internal format:
     | Date | Category | Type | Description | Amount |
+    
+    Loads from both 'Facts_New' (EUR) and 'Facts' (BGN, converted to EUR) tabs.
     """
-    try:
-        st.info(f"Attempting to open spreadsheet: {spreadsheet_id[:20]}...")
-        spreadsheet = _client.open_by_key(spreadsheet_id)
-        
-        st.info("Spreadsheet opened. Looking for 'Facts_New' tab...")
-        sheet = spreadsheet.worksheet("Facts_New")  # Read from Facts_New tab
-        
-        st.info("Reading data from sheet...")
+    
+    # BGN to EUR conversion rate (fixed rate)
+    BGN_TO_EUR = 1.95583
+    
+    def parse_european_number(val):
+        """Parse numbers with European format (comma as decimal, space as thousands)."""
+        if pd.isna(val) or val == '' or val is None:
+            return 0.0
+        if isinstance(val, (int, float)):
+            return float(val)
+        # Handle string: remove spaces (thousands separator), replace comma with dot
+        val_str = str(val).strip()
+        # Check if it uses European format: "1 234,56" or "1234,56"
+        # Remove space (thousands separator)
+        val_str = val_str.replace(' ', '')
+        # Replace comma with dot (decimal separator)
+        val_str = val_str.replace(',', '.')
+        try:
+            return float(val_str)
+        except:
+            return 0.0
+    
+    def process_sheet(sheet, convert_bgn_to_eur: bool = False) -> pd.DataFrame:
+        """Process a single sheet and return cleaned DataFrame."""
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
         
-        st.info(f"Loaded {len(df)} rows. Columns: {list(df.columns)}")
-        
-        # Handle empty dataframe
         if df.empty:
-            st.error("Sheet is empty or could not be read")
             return pd.DataFrame()
-        
-        # ============================================================
-        # COLUMN MAPPING for FamilyBudget format
-        # ============================================================
         
         # Parse Date (handles DD.MM.YYYY format)
         if 'Date' in df.columns:
@@ -170,34 +180,22 @@ def load_budget_data(_client, spreadsheet_id: str) -> pd.DataFrame:
         
         # Combine IncomeAmount and OutcomeAmount into single Amount column
         if 'IncomeAmount' in df.columns and 'OutcomeAmount' in df.columns:
-            # Convert to numeric, handling European decimal format (comma as decimal)
-            def parse_amount(val):
-                if pd.isna(val) or val == '' or val is None:
-                    return 0.0
-                if isinstance(val, (int, float)):
-                    return float(val)
-                # Handle string with comma as decimal separator
-                val_str = str(val).replace(' ', '').replace(',', '.')
-                try:
-                    return float(val_str)
-                except:
-                    return 0.0
-            
-            df['IncomeAmount'] = df['IncomeAmount'].apply(parse_amount)
-            df['OutcomeAmount'] = df['OutcomeAmount'].apply(parse_amount)
+            df['IncomeAmount'] = df['IncomeAmount'].apply(parse_european_number)
+            df['OutcomeAmount'] = df['OutcomeAmount'].apply(parse_european_number)
             
             # Income is positive, Expenses are negative
             df['Amount'] = df['IncomeAmount'] - df['OutcomeAmount']
-        
-        # Fallback: if Amount column exists directly
         elif 'Amount' in df.columns:
-            df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce')
+            df['Amount'] = df['Amount'].apply(parse_european_number)
+        
+        # Convert BGN to EUR if needed
+        if convert_bgn_to_eur:
+            df['Amount'] = df['Amount'] / BGN_TO_EUR
         
         # Ensure required columns exist
         required = ['Date', 'Category', 'Amount']
         for col in required:
             if col not in df.columns:
-                st.error(f"Missing required column: {col}")
                 return pd.DataFrame()
         
         # Fill missing optional columns
@@ -212,12 +210,51 @@ def load_budget_data(_client, spreadsheet_id: str) -> pd.DataFrame:
         df = df[df['Amount'] != 0]
         
         # Select and reorder final columns
-        df = df[['Date', 'Category', 'Type', 'Description', 'Amount']]
+        return df[['Date', 'Category', 'Type', 'Description', 'Amount']]
+    
+    try:
+        st.info(f"Attempting to open spreadsheet: {spreadsheet_id[:20]}...")
+        spreadsheet = _client.open_by_key(spreadsheet_id)
         
-        st.success(f"Successfully loaded {len(df)} transactions!")
-        return df.sort_values('Date', ascending=False)
+        all_data = []
+        
+        # Load Facts_New sheet (already in EUR)
+        try:
+            st.info("Loading 'Facts_New' tab (EUR)...")
+            sheet_new = spreadsheet.worksheet("Facts_New")
+            df_new = process_sheet(sheet_new, convert_bgn_to_eur=False)
+            if not df_new.empty:
+                all_data.append(df_new)
+                st.info(f"Facts_New: {len(df_new)} transactions (EUR)")
+        except Exception as e:
+            st.warning(f"Could not load Facts_New: {e}")
+        
+        # Load Facts sheet (BGN - convert to EUR)
+        try:
+            st.info("Loading 'Facts' tab (BGN → EUR)...")
+            sheet_old = spreadsheet.worksheet("Facts")
+            df_old = process_sheet(sheet_old, convert_bgn_to_eur=True)
+            if not df_old.empty:
+                all_data.append(df_old)
+                st.info(f"Facts: {len(df_old)} transactions (converted from BGN)")
+        except Exception as e:
+            st.warning(f"Could not load Facts: {e}")
+        
+        # Combine all data
+        if not all_data:
+            st.error("No data found in any sheet")
+            return pd.DataFrame()
+        
+        df = pd.concat(all_data, ignore_index=True)
+        df = df.drop_duplicates()  # Remove any duplicates
+        df = df.sort_values('Date', ascending=False)
+        
+        st.success(f"Successfully loaded {len(df)} total transactions!")
+        return df
     
     except Exception as e:
+        st.error(f"Error loading data: {type(e).__name__}: {e}")
+        return pd.DataFrame()
         st.error(f"Error loading data: {type(e).__name__}: {e}")
         return pd.DataFrame()
 
