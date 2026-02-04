@@ -462,7 +462,8 @@ def render_top_expenses(df: pd.DataFrame, n: int = 10):
     fig.update_traces(
     text=by_category['Amount'],
     textposition='inside',
-    textfont=dict(color='black')
+    textfont=dict(color='black'),
+    texttemplate='€%{x:,.2f}'
     )
     
     fig.update_layout(
