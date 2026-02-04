@@ -331,20 +331,20 @@ def render_kpi_cards(df: pd.DataFrame, period_label: str):
     with col1:
         st.metric(
             label=f"💵 Total Income ({period_label})",
-            value=f"${total_income:,.2f}",
+            value=f"€{total_income:,.2f}",
         )
     
     with col2:
         st.metric(
             label=f"💸 Total Expenses ({period_label})",
-            value=f"${total_expenses:,.2f}",
+            value=f"€{total_expenses:,.2f}",
         )
     
     with col3:
         delta_color = "normal" if net_balance >= 0 else "inverse"
         st.metric(
             label="📊 Net Balance",
-            value=f"${net_balance:,.2f}",
+            value=f"€{net_balance:,.2f}",
             delta=f"{'Surplus' if net_balance >= 0 else 'Deficit'}",
             delta_color=delta_color
         )
@@ -437,7 +437,7 @@ def render_category_breakdown(df: pd.DataFrame):
     fig.update_traces(
         textposition='inside',
         textinfo='percent+label',
-        hovertemplate='<b>%{label}</b><br>$%{value:,.2f}<br>%{percent}'
+        hovertemplate='<b>%{label}</b><br>€%{value:,.2f}<br>%{percent}'
     )
     
     st.plotly_chart(fig, use_container_width=True)
@@ -460,7 +460,7 @@ def render_top_expenses(df: pd.DataFrame, n: int = 10):
             colorscale='Reds',
             line=dict(color='rgba(255,255,255,0.2)', width=1)
         ),
-        text=[f'${x:,.0f}' for x in by_category['Amount']],
+        text=[f'€{x:,.0f}' for x in by_category['Amount']],
         textposition='inside',
         textfont=dict(color='white', family='JetBrains Mono')
     ))
@@ -471,7 +471,7 @@ def render_top_expenses(df: pd.DataFrame, n: int = 10):
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
         font=dict(family='DM Sans'),
-        xaxis_title='Amount ($)',
+        xaxis_title='Amount (€)',
         yaxis_title='',
         showlegend=False
     )
@@ -484,7 +484,7 @@ def render_transactions_table(df: pd.DataFrame):
     display_df = df.head(20).copy()
     display_df['Date'] = display_df['Date'].dt.strftime('%Y-%m-%d')
     display_df['Amount'] = display_df['Amount'].apply(
-        lambda x: f"${x:,.2f}" if x >= 0 else f"-${abs(x):,.2f}"
+        lambda x: f"€{x:,.2f}" if x >= 0 else f"-€{abs(x):,.2f}"
     )
     
     st.dataframe(
