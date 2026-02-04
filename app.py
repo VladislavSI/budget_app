@@ -166,40 +166,27 @@ def load_budget_data(_client, spreadsheet_id: str) -> pd.DataFrame:
         if df.empty:
             return pd.DataFrame()
         
-        # Debug: show columns found
-        st.info(f"{sheet_name} columns: {list(df.columns)}")
-        
         # Parse Date (handles DD.MM.YYYY format)
         if 'Date' in df.columns:
             df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce')
-        
-        # Debug: show date range
-        valid_dates = df['Date'].dropna()
-        if len(valid_dates) > 0:
-            st.info(f"{sheet_name} date range: {valid_dates.min()} to {valid_dates.max()}")
         
         # Map Type from Flag column (Income/Expense)
         if 'Flag' in df.columns and 'Type' not in df.columns:
             df['Type'] = df['Flag']
         
-        # Map Description from Where column
-        if 'Where' in df.columns and 'Description' not in df.columns:
-            df['Description'] = df['Where']
+        # Map Place from Where column
+        if 'Where' in df.columns:
+            df['Place'] = df['Where']
+        else:
+            df['Place'] = ''
         
         # Combine IncomeAmount and OutcomeAmount into single Amount column
         if 'IncomeAmount' in df.columns and 'OutcomeAmount' in df.columns:
             df['IncomeAmount'] = df['IncomeAmount'].apply(parse_european_number)
             df['OutcomeAmount'] = df['OutcomeAmount'].apply(parse_european_number)
             
-            # Debug: show sample values
-            st.info(f"{sheet_name} first 3 IncomeAmount: {df['IncomeAmount'].head(3).tolist()}")
-            st.info(f"{sheet_name} first 3 OutcomeAmount: {df['OutcomeAmount'].head(3).tolist()}")
-            
             # Income is positive, Expenses are negative
             df['Amount'] = df['IncomeAmount'] - df['OutcomeAmount']
-            
-            # Debug: show totals
-            st.info(f"{sheet_name} Total Income: {df['IncomeAmount'].sum():.2f}, Total Outcome: {df['OutcomeAmount'].sum():.2f}")
         elif 'Amount' in df.columns:
             df['Amount'] = df['Amount'].apply(parse_european_number)
         
@@ -217,47 +204,33 @@ def load_budget_data(_client, spreadsheet_id: str) -> pd.DataFrame:
         if 'Type' not in df.columns:
             df['Type'] = df['Amount'].apply(lambda x: 'Income' if x > 0 else 'Expense')
         
-        if 'Description' not in df.columns:
-            df['Description'] = ''
-        
         # Clean up: remove rows with invalid dates or zero amounts
-        before_clean = len(df)
         df = df.dropna(subset=['Date'])
-        after_date_clean = len(df)
         df = df[df['Amount'] != 0]
-        after_amount_clean = len(df)
-        
-        if before_clean != after_amount_clean:
-            st.warning(f"{sheet_name}: Dropped {before_clean - after_date_clean} rows with invalid dates, {after_date_clean - after_amount_clean} rows with zero amount")
         
         # Select and reorder final columns
-        return df[['Date', 'Category', 'Type', 'Description', 'Amount']]
+        return df[['Date', 'Category', 'Type', 'Place', 'Amount']]
     
     try:
-        st.info(f"Attempting to open spreadsheet: {spreadsheet_id[:20]}...")
         spreadsheet = _client.open_by_key(spreadsheet_id)
         
         all_data = []
         
         # Load Facts_New sheet (already in EUR)
         try:
-            st.info("Loading 'Facts_New' tab (EUR)...")
             sheet_new = spreadsheet.worksheet("Facts_New")
             df_new = process_sheet(sheet_new, convert_bgn_to_eur=False, sheet_name="Facts_New")
             if not df_new.empty:
                 all_data.append(df_new)
-                st.info(f"Facts_New: {len(df_new)} transactions (EUR)")
         except Exception as e:
             st.warning(f"Could not load Facts_New: {e}")
         
         # Load Facts sheet (BGN - convert to EUR)
         try:
-            st.info("Loading 'Facts' tab (BGN → EUR)...")
             sheet_old = spreadsheet.worksheet("Facts")
             df_old = process_sheet(sheet_old, convert_bgn_to_eur=True, sheet_name="Facts")
             if not df_old.empty:
                 all_data.append(df_old)
-                st.info(f"Facts: {len(df_old)} transactions (converted from BGN)")
         except Exception as e:
             st.warning(f"Could not load Facts: {e}")
         
@@ -270,13 +243,11 @@ def load_budget_data(_client, spreadsheet_id: str) -> pd.DataFrame:
         # Note: Not removing duplicates as legitimate transactions may have same date/category/amount
         df = df.sort_values('Date', ascending=False)
         
-        st.success(f"Successfully loaded {len(df)} total transactions!")
+        st.success(f"✅ Loaded {len(df)} transactions")
         return df
     
     except Exception as e:
-        st.error(f"Error loading data: {type(e).__name__}: {e}")
-        return pd.DataFrame()
-        st.error(f"Error loading data: {type(e).__name__}: {e}")
+        st.error(f"Error loading data: {e}")
         return pd.DataFrame()
 
 
@@ -287,6 +258,8 @@ def load_demo_data() -> pd.DataFrame:
     categories_income = ['Salary', 'Freelance', 'Investments', 'Other Income']
     categories_expense = ['Rent', 'Groceries', 'Utilities', 'Transport', 
                           'Entertainment', 'Dining', 'Shopping', 'Healthcare']
+    places_expense = ['Supermarket', 'Gas Station', 'Restaurant', 'Online Store', 
+                      'Pharmacy', 'Cinema', 'Utility Company', 'Landlord']
     
     data = []
     start_date = datetime.now() - timedelta(days=180)
@@ -300,7 +273,7 @@ def load_demo_data() -> pd.DataFrame:
                 'Date': current_date,
                 'Category': 'Salary',
                 'Type': 'Income',
-                'Description': 'Monthly salary',
+                'Place': 'Employer',
                 'Amount': random.randint(4500, 5500)
             })
         
@@ -311,7 +284,7 @@ def load_demo_data() -> pd.DataFrame:
                 'Date': current_date,
                 'Category': cat,
                 'Type': 'Expense',
-                'Description': f'{cat} expense',
+                'Place': random.choice(places_expense),
                 'Amount': -random.randint(10, 300)
             })
     
@@ -346,11 +319,6 @@ def render_kpi_cards(df: pd.DataFrame, period_label: str):
     total_expenses = abs(df[df['Amount'] < 0]['Amount'].sum())
     net_balance = total_income - total_expenses
     savings_rate = (net_balance / total_income * 100) if total_income > 0 else 0
-    
-    # Debug: show calculation details
-    income_count = len(df[df['Amount'] > 0])
-    expense_count = len(df[df['Amount'] < 0])
-    st.info(f"KPI Debug: {income_count} income transactions = €{total_income:.2f}, {expense_count} expense transactions = €{total_expenses:.2f}")
     
     col1, col2, col3, col4 = st.columns(4)
     
@@ -514,14 +482,14 @@ def render_transactions_table(df: pd.DataFrame):
     )
     
     st.dataframe(
-        display_df[['Date', 'Category', 'Type', 'Description', 'Amount']],
+        display_df[['Date', 'Category', 'Type', 'Place', 'Amount']],
         use_container_width=True,
         hide_index=True,
         column_config={
             'Date': st.column_config.TextColumn('Date', width='small'),
             'Category': st.column_config.TextColumn('Category', width='medium'),
             'Type': st.column_config.TextColumn('Type', width='small'),
-            'Description': st.column_config.TextColumn('Description', width='large'),
+            'Place': st.column_config.TextColumn('Place', width='large'),
             'Amount': st.column_config.TextColumn('Amount', width='small'),
         }
     )
@@ -555,24 +523,22 @@ def render_sidebar_filters(df: pd.DataFrame):
         col1, col2 = st.sidebar.columns(2)
         
         with col1:
-            if st.button("This Month", use_container_width=True):
-                st.session_state.date_preset = 'this_month'
-            if st.button("Last 3 Mo", use_container_width=True):
+            if st.button("Year To Date", use_container_width=True):
+                st.session_state.date_preset = 'year_to_date'
+            if st.button("Last 3 Months", use_container_width=True):
                 st.session_state.date_preset = 'last_3_months'
         with col2:
-            if st.button("Last Month", use_container_width=True):
-                st.session_state.date_preset = 'last_month'
-            if st.button("This Year", use_container_width=True):
-                st.session_state.date_preset = 'this_year'
+            if st.button("Last Year", use_container_width=True):
+                st.session_state.date_preset = 'last_year'
+            if st.button("All Time", use_container_width=True):
+                st.session_state.date_preset = 'all_time'
         
-        # All Time button
-        if st.sidebar.button("📊 All Time", use_container_width=True):
-            st.session_state.date_preset = 'all_time'
+        st.sidebar.divider()
         
-        # Custom date range (clears preset)
-        st.sidebar.markdown("**Or select custom range:**")
+        # Custom date range
+        st.sidebar.markdown("**Custom Date Range:**")
         date_range = st.sidebar.date_input(
-            "📅 Date Range",
+            "📅 Select Dates",
             value=(min_date, max_date),
             min_value=min_date,
             max_value=max_date,
@@ -585,26 +551,42 @@ def render_sidebar_filters(df: pd.DataFrame):
         
         st.sidebar.divider()
         
-        # Category filter
-        categories = ['All'] + sorted(df['Category'].unique().tolist())
-        selected_categories = st.sidebar.multiselect(
-            "🏷️ Categories",
-            options=categories,
-            default=['All']
+        # Type filter (Income/Expense)
+        st.sidebar.markdown("**Transaction Type:**")
+        types = ['All'] + sorted(df['Type'].unique().tolist())
+        selected_types = st.sidebar.multiselect(
+            "💱 Type",
+            options=types,
+            default=['All'],
+            label_visibility="collapsed"
         )
         
-        # Type filter
-        type_filter = st.sidebar.radio(
-            "💱 Transaction Type",
-            options=['All', 'Income', 'Expense'],
-            horizontal=True
+        # Category filter
+        st.sidebar.markdown("**Category:**")
+        categories = ['All'] + sorted(df['Category'].unique().tolist())
+        selected_categories = st.sidebar.multiselect(
+            "🏷️ Category",
+            options=categories,
+            default=['All'],
+            label_visibility="collapsed"
+        )
+        
+        # Place filter
+        st.sidebar.markdown("**Place:**")
+        places = ['All'] + sorted([p for p in df['Place'].unique().tolist() if p])
+        selected_places = st.sidebar.multiselect(
+            "📍 Place",
+            options=places,
+            default=['All'],
+            label_visibility="collapsed"
         )
         
         return {
             'date_range': date_range,
             'preset': st.session_state.date_preset,
+            'types': selected_types,
             'categories': selected_categories,
-            'type_filter': type_filter
+            'places': selected_places
         }
     
     return {}
@@ -618,31 +600,21 @@ def apply_filters(df: pd.DataFrame, filters: dict) -> tuple:
     # Date filtering
     if 'preset' in filters and filters['preset']:
         today = datetime.now()
-        if filters['preset'] == 'this_month':
-            start = today.replace(day=1).date()
+        if filters['preset'] == 'year_to_date':
+            start = today.replace(month=1, day=1).date()
             filtered = filtered[filtered['Date'].dt.date >= start]
-            period_label = "This Month"
-        elif filters['preset'] == 'last_month':
-            first_this_month = today.replace(day=1)
-            last_month_end = first_this_month - timedelta(days=1)
-            last_month_start = last_month_end.replace(day=1)
-            filtered = filtered[(filtered['Date'].dt.date >= last_month_start.date()) & 
-                               (filtered['Date'].dt.date <= last_month_end.date())]
-            period_label = "Last Month"
+            period_label = "Year To Date"
+        elif filters['preset'] == 'last_year':
+            last_year = today.year - 1
+            start = datetime(last_year, 1, 1).date()
+            end = datetime(last_year, 12, 31).date()
+            filtered = filtered[(filtered['Date'].dt.date >= start) & 
+                               (filtered['Date'].dt.date <= end)]
+            period_label = f"Last Year ({last_year})"
         elif filters['preset'] == 'last_3_months':
             start = (today - timedelta(days=90)).date()
             filtered = filtered[filtered['Date'].dt.date >= start]
             period_label = "Last 3 Months"
-        elif filters['preset'] == 'this_year':
-            start = today.replace(month=1, day=1).date()
-            st.warning(f"DEBUG: This Year - today={today}, start={start}, year={today.year}")
-            before_filter = len(filtered)
-            # Show first few dates before filtering
-            st.info(f"First 5 dates before filter: {filtered['Date'].head().tolist()}")
-            filtered = filtered[filtered['Date'].dt.date >= start]
-            after_filter = len(filtered)
-            st.info(f"This Year filter: start={start}, before={before_filter}, after={after_filter}, dropped={before_filter - after_filter}")
-            period_label = "This Year"
         elif filters['preset'] == 'all_time':
             # No date filtering - show all data
             period_label = "All Time"
@@ -652,16 +624,17 @@ def apply_filters(df: pd.DataFrame, filters: dict) -> tuple:
                            (filtered['Date'].dt.date <= end)]
         period_label = f"{start} to {end}"
     
+    # Type filtering
+    if 'types' in filters and 'All' not in filters['types'] and filters['types']:
+        filtered = filtered[filtered['Type'].isin(filters['types'])]
+    
     # Category filtering
-    if 'categories' in filters and 'All' not in filters['categories']:
+    if 'categories' in filters and 'All' not in filters['categories'] and filters['categories']:
         filtered = filtered[filtered['Category'].isin(filters['categories'])]
     
-    # Type filtering
-    if 'type_filter' in filters and filters['type_filter'] != 'All':
-        if filters['type_filter'] == 'Income':
-            filtered = filtered[filtered['Amount'] > 0]
-        else:
-            filtered = filtered[filtered['Amount'] < 0]
+    # Place filtering
+    if 'places' in filters and 'All' not in filters['places'] and filters['places']:
+        filtered = filtered[filtered['Place'].isin(filters['places'])]
     
     return filtered, period_label
 
