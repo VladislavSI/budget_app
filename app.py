@@ -531,17 +531,13 @@ def render_transactions_table(df: pd.DataFrame):
 # SIDEBAR
 # ============================================================================
 
-def render_sidebar(df: pd.DataFrame):
+def render_sidebar_filters(df: pd.DataFrame):
     """Render sidebar with filters."""
     st.sidebar.markdown("""
         <div style="text-align: center; padding: 20px 0;">
             <h2 style="color: #a78bfa;">⚙️ Filters</h2>
         </div>
     """, unsafe_allow_html=True)
-    
-    # Data source toggle
-    use_demo = st.sidebar.toggle("Use Demo Data", value=True, 
-                                  help="Toggle to use demo data or connect to Google Sheets")
     
     st.sidebar.divider()
     
@@ -573,6 +569,10 @@ def render_sidebar(df: pd.DataFrame):
             if st.button("This Year", use_container_width=True):
                 preset = 'this_year'
         
+        # All Time button
+        if st.sidebar.button("📊 All Time", use_container_width=True):
+            preset = 'all_time'
+        
         st.sidebar.divider()
         
         # Category filter
@@ -591,14 +591,13 @@ def render_sidebar(df: pd.DataFrame):
         )
         
         return {
-            'use_demo': use_demo,
             'date_range': date_range,
             'preset': preset,
             'categories': selected_categories,
             'type_filter': type_filter
         }
     
-    return {'use_demo': use_demo}
+    return {}
 
 
 def apply_filters(df: pd.DataFrame, filters: dict) -> tuple:
@@ -628,6 +627,9 @@ def apply_filters(df: pd.DataFrame, filters: dict) -> tuple:
             start = today.replace(month=1, day=1)
             filtered = filtered[filtered['Date'] >= start]
             period_label = "This Year"
+        elif filters['preset'] == 'all_time':
+            # No date filtering - show all data
+            period_label = "All Time"
     elif 'date_range' in filters and len(filters['date_range']) == 2:
         start, end = filters['date_range']
         filtered = filtered[(filtered['Date'].dt.date >= start) & 
@@ -655,14 +657,12 @@ def apply_filters(df: pd.DataFrame, filters: dict) -> tuple:
 def main():
     render_header()
     
-    # Load initial data for sidebar
-    initial_df = load_demo_data()
+    # Check demo toggle first (need to do this before loading data for sidebar)
+    use_demo = st.sidebar.toggle("Use Demo Data", value=False, 
+                                  help="Toggle to use demo data or connect to Google Sheets")
     
-    # Render sidebar and get filters
-    filters = render_sidebar(initial_df)
-    
-    # Load actual data based on toggle
-    if filters.get('use_demo', True):
+    # Load data based on toggle
+    if use_demo:
         df = load_demo_data()
         st.sidebar.success("✅ Using demo data")
     else:
@@ -679,6 +679,10 @@ def main():
     if df.empty:
         st.error("No data available to display.")
         return
+    
+    # Now render sidebar with actual data
+    filters = render_sidebar_filters(df)
+    filters['use_demo'] = use_demo
     
     # Apply filters
     filtered_df, period_label = apply_filters(df, filters)
