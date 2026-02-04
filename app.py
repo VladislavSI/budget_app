@@ -541,37 +541,47 @@ def render_sidebar_filters(df: pd.DataFrame):
     
     st.sidebar.divider()
     
+    # Initialize session state for preset
+    if 'date_preset' not in st.session_state:
+        st.session_state.date_preset = None
+    
     # Date range filter
     if not df.empty:
         min_date = df['Date'].min().date()
         max_date = df['Date'].max().date()
         
-        date_range = st.sidebar.date_input(
-            "📅 Date Range",
-            value=(min_date, max_date),
-            min_value=min_date,
-            max_value=max_date
-        )
-        
         # Quick date presets
         st.sidebar.markdown("**Quick Select:**")
         col1, col2 = st.sidebar.columns(2)
         
-        preset = None
         with col1:
             if st.button("This Month", use_container_width=True):
-                preset = 'this_month'
+                st.session_state.date_preset = 'this_month'
             if st.button("Last 3 Mo", use_container_width=True):
-                preset = 'last_3_months'
+                st.session_state.date_preset = 'last_3_months'
         with col2:
             if st.button("Last Month", use_container_width=True):
-                preset = 'last_month'
+                st.session_state.date_preset = 'last_month'
             if st.button("This Year", use_container_width=True):
-                preset = 'this_year'
+                st.session_state.date_preset = 'this_year'
         
         # All Time button
         if st.sidebar.button("📊 All Time", use_container_width=True):
-            preset = 'all_time'
+            st.session_state.date_preset = 'all_time'
+        
+        # Custom date range (clears preset)
+        st.sidebar.markdown("**Or select custom range:**")
+        date_range = st.sidebar.date_input(
+            "📅 Date Range",
+            value=(min_date, max_date),
+            min_value=min_date,
+            max_value=max_date,
+            key="date_range_input"
+        )
+        
+        # If user changes date range manually, clear preset
+        if date_range != (min_date, max_date):
+            st.session_state.date_preset = None
         
         st.sidebar.divider()
         
@@ -592,7 +602,7 @@ def render_sidebar_filters(df: pd.DataFrame):
         
         return {
             'date_range': date_range,
-            'preset': preset,
+            'preset': st.session_state.date_preset,
             'categories': selected_categories,
             'type_filter': type_filter
         }
@@ -609,23 +619,29 @@ def apply_filters(df: pd.DataFrame, filters: dict) -> tuple:
     if 'preset' in filters and filters['preset']:
         today = datetime.now()
         if filters['preset'] == 'this_month':
-            start = today.replace(day=1)
-            filtered = filtered[filtered['Date'] >= start]
+            start = today.replace(day=1).date()
+            filtered = filtered[filtered['Date'].dt.date >= start]
             period_label = "This Month"
         elif filters['preset'] == 'last_month':
             first_this_month = today.replace(day=1)
             last_month_end = first_this_month - timedelta(days=1)
             last_month_start = last_month_end.replace(day=1)
-            filtered = filtered[(filtered['Date'] >= last_month_start) & 
-                               (filtered['Date'] <= last_month_end)]
+            filtered = filtered[(filtered['Date'].dt.date >= last_month_start.date()) & 
+                               (filtered['Date'].dt.date <= last_month_end.date())]
             period_label = "Last Month"
         elif filters['preset'] == 'last_3_months':
-            start = today - timedelta(days=90)
-            filtered = filtered[filtered['Date'] >= start]
+            start = (today - timedelta(days=90)).date()
+            filtered = filtered[filtered['Date'].dt.date >= start]
             period_label = "Last 3 Months"
         elif filters['preset'] == 'this_year':
-            start = today.replace(month=1, day=1)
-            filtered = filtered[filtered['Date'] >= start]
+            start = today.replace(month=1, day=1).date()
+            st.warning(f"DEBUG: This Year - today={today}, start={start}, year={today.year}")
+            before_filter = len(filtered)
+            # Show first few dates before filtering
+            st.info(f"First 5 dates before filter: {filtered['Date'].head().tolist()}")
+            filtered = filtered[filtered['Date'].dt.date >= start]
+            after_filter = len(filtered)
+            st.info(f"This Year filter: start={start}, before={before_filter}, after={after_filter}, dropped={before_filter - after_filter}")
             period_label = "This Year"
         elif filters['preset'] == 'all_time':
             # No date filtering - show all data
