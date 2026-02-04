@@ -458,6 +458,12 @@ def render_top_expenses(df: pd.DataFrame, n: int = 10):
         textposition='inside',
         textfont=dict(color='white', family='JetBrains Mono')
     ))
+
+    fig.update_traces(
+    text=by_category['Amount'],
+    textposition='inside',
+    textfont=dict(color='black')
+    )
     
     fig.update_layout(
         title=f'Top {n} Expense Categories',
