@@ -128,25 +128,83 @@ def load_budget_data(_client, spreadsheet_id: str) -> pd.DataFrame:
     """
     Load budget data from Google Sheets.
     
-    Expected sheet format:
+    Supports Vlad's FamilyBudget format:
+    | Date | Flag | Category | Where | IncomeAmount | OutcomeAmount | ... |
+    
+    Maps to internal format:
     | Date | Category | Type | Description | Amount |
-    |------|----------|------|-------------|--------|
-    | 2024-01-15 | Salary | Income | Monthly salary | 5000 |
-    | 2024-01-16 | Groceries | Expense | Weekly shopping | -150 |
     """
     try:
         sheet = _client.open_by_key(spreadsheet_id).sheet1
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
         
-        # Data cleaning
-        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-        df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce')
-        df = df.dropna(subset=['Date', 'Amount'])
+        # Handle empty dataframe
+        if df.empty:
+            st.error("Sheet is empty or could not be read")
+            return pd.DataFrame()
         
-        # Ensure Type column exists
+        # ============================================================
+        # COLUMN MAPPING for FamilyBudget format
+        # ============================================================
+        
+        # Parse Date (handles DD.MM.YYYY format)
+        if 'Date' in df.columns:
+            df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce')
+        
+        # Map Type from Flag column (Income/Expense)
+        if 'Flag' in df.columns and 'Type' not in df.columns:
+            df['Type'] = df['Flag']
+        
+        # Map Description from Where column
+        if 'Where' in df.columns and 'Description' not in df.columns:
+            df['Description'] = df['Where']
+        
+        # Combine IncomeAmount and OutcomeAmount into single Amount column
+        if 'IncomeAmount' in df.columns and 'OutcomeAmount' in df.columns:
+            # Convert to numeric, handling European decimal format (comma as decimal)
+            def parse_amount(val):
+                if pd.isna(val) or val == '' or val is None:
+                    return 0.0
+                if isinstance(val, (int, float)):
+                    return float(val)
+                # Handle string with comma as decimal separator
+                val_str = str(val).replace(' ', '').replace(',', '.')
+                try:
+                    return float(val_str)
+                except:
+                    return 0.0
+            
+            df['IncomeAmount'] = df['IncomeAmount'].apply(parse_amount)
+            df['OutcomeAmount'] = df['OutcomeAmount'].apply(parse_amount)
+            
+            # Income is positive, Expenses are negative
+            df['Amount'] = df['IncomeAmount'] - df['OutcomeAmount']
+        
+        # Fallback: if Amount column exists directly
+        elif 'Amount' in df.columns:
+            df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce')
+        
+        # Ensure required columns exist
+        required = ['Date', 'Category', 'Amount']
+        for col in required:
+            if col not in df.columns:
+                st.error(f"Missing required column: {col}")
+                return pd.DataFrame()
+        
+        # Fill missing optional columns
         if 'Type' not in df.columns:
             df['Type'] = df['Amount'].apply(lambda x: 'Income' if x > 0 else 'Expense')
+        
+        if 'Description' not in df.columns:
+            df['Description'] = ''
+        
+        # Clean up: remove rows with invalid dates or zero amounts
+        df = df.dropna(subset=['Date'])
+        df = df[df['Amount'] != 0]
+        
+        # Select and reorder final columns
+        df = df[['Date', 'Category', 'Type', 'Description', 'Amount']]
         
         return df.sort_values('Date', ascending=False)
     
