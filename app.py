@@ -450,8 +450,7 @@ def render_top_expenses(df: pd.DataFrame, n: int = 10):
         y=by_category['Category'],
         orientation='h',
         marker=dict(
-        color=by_category['Category'],
-        colorscale=px.colors.qualitative.Set2,
+        color=by_category['Category'],  # categorical
         line=dict(color='rgba(255,255,255,0.2)', width=1)
     ),
         text=[f'€{x:,.0f}' for x in by_category['Amount']],
