@@ -158,7 +158,7 @@ def load_budget_data(_client, spreadsheet_id: str) -> pd.DataFrame:
         except:
             return 0.0
     
-    def process_sheet(sheet, convert_bgn_to_eur: bool = False) -> pd.DataFrame:
+    def process_sheet(sheet, convert_bgn_to_eur: bool = False, sheet_name: str = "") -> pd.DataFrame:
         """Process a single sheet and return cleaned DataFrame."""
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
@@ -166,9 +166,17 @@ def load_budget_data(_client, spreadsheet_id: str) -> pd.DataFrame:
         if df.empty:
             return pd.DataFrame()
         
+        # Debug: show columns found
+        st.info(f"{sheet_name} columns: {list(df.columns)}")
+        
         # Parse Date (handles DD.MM.YYYY format)
         if 'Date' in df.columns:
             df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce')
+        
+        # Debug: show date range
+        valid_dates = df['Date'].dropna()
+        if len(valid_dates) > 0:
+            st.info(f"{sheet_name} date range: {valid_dates.min()} to {valid_dates.max()}")
         
         # Map Type from Flag column (Income/Expense)
         if 'Flag' in df.columns and 'Type' not in df.columns:
@@ -183,8 +191,15 @@ def load_budget_data(_client, spreadsheet_id: str) -> pd.DataFrame:
             df['IncomeAmount'] = df['IncomeAmount'].apply(parse_european_number)
             df['OutcomeAmount'] = df['OutcomeAmount'].apply(parse_european_number)
             
+            # Debug: show sample values
+            st.info(f"{sheet_name} first 3 IncomeAmount: {df['IncomeAmount'].head(3).tolist()}")
+            st.info(f"{sheet_name} first 3 OutcomeAmount: {df['OutcomeAmount'].head(3).tolist()}")
+            
             # Income is positive, Expenses are negative
             df['Amount'] = df['IncomeAmount'] - df['OutcomeAmount']
+            
+            # Debug: show totals
+            st.info(f"{sheet_name} Total Income: {df['IncomeAmount'].sum():.2f}, Total Outcome: {df['OutcomeAmount'].sum():.2f}")
         elif 'Amount' in df.columns:
             df['Amount'] = df['Amount'].apply(parse_european_number)
         
@@ -206,8 +221,14 @@ def load_budget_data(_client, spreadsheet_id: str) -> pd.DataFrame:
             df['Description'] = ''
         
         # Clean up: remove rows with invalid dates or zero amounts
+        before_clean = len(df)
         df = df.dropna(subset=['Date'])
+        after_date_clean = len(df)
         df = df[df['Amount'] != 0]
+        after_amount_clean = len(df)
+        
+        if before_clean != after_amount_clean:
+            st.warning(f"{sheet_name}: Dropped {before_clean - after_date_clean} rows with invalid dates, {after_date_clean - after_amount_clean} rows with zero amount")
         
         # Select and reorder final columns
         return df[['Date', 'Category', 'Type', 'Description', 'Amount']]
@@ -222,7 +243,7 @@ def load_budget_data(_client, spreadsheet_id: str) -> pd.DataFrame:
         try:
             st.info("Loading 'Facts_New' tab (EUR)...")
             sheet_new = spreadsheet.worksheet("Facts_New")
-            df_new = process_sheet(sheet_new, convert_bgn_to_eur=False)
+            df_new = process_sheet(sheet_new, convert_bgn_to_eur=False, sheet_name="Facts_New")
             if not df_new.empty:
                 all_data.append(df_new)
                 st.info(f"Facts_New: {len(df_new)} transactions (EUR)")
@@ -233,7 +254,7 @@ def load_budget_data(_client, spreadsheet_id: str) -> pd.DataFrame:
         try:
             st.info("Loading 'Facts' tab (BGN → EUR)...")
             sheet_old = spreadsheet.worksheet("Facts")
-            df_old = process_sheet(sheet_old, convert_bgn_to_eur=True)
+            df_old = process_sheet(sheet_old, convert_bgn_to_eur=True, sheet_name="Facts")
             if not df_old.empty:
                 all_data.append(df_old)
                 st.info(f"Facts: {len(df_old)} transactions (converted from BGN)")
@@ -246,7 +267,7 @@ def load_budget_data(_client, spreadsheet_id: str) -> pd.DataFrame:
             return pd.DataFrame()
         
         df = pd.concat(all_data, ignore_index=True)
-        df = df.drop_duplicates()  # Remove any duplicates
+        # Note: Not removing duplicates as legitimate transactions may have same date/category/amount
         df = df.sort_values('Date', ascending=False)
         
         st.success(f"Successfully loaded {len(df)} total transactions!")
