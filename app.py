@@ -135,10 +135,17 @@ def load_budget_data(_client, spreadsheet_id: str) -> pd.DataFrame:
     | Date | Category | Type | Description | Amount |
     """
     try:
+        st.info(f"Attempting to open spreadsheet: {spreadsheet_id[:20]}...")
         spreadsheet = _client.open_by_key(spreadsheet_id)
+        
+        st.info("Spreadsheet opened. Looking for 'Facts_New' tab...")
         sheet = spreadsheet.worksheet("Facts_New")  # Read from Facts_New tab
+        
+        st.info("Reading data from sheet...")
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
+        
+        st.info(f"Loaded {len(df)} rows. Columns: {list(df.columns)}")
         
         # Handle empty dataframe
         if df.empty:
@@ -207,10 +214,11 @@ def load_budget_data(_client, spreadsheet_id: str) -> pd.DataFrame:
         # Select and reorder final columns
         df = df[['Date', 'Category', 'Type', 'Description', 'Amount']]
         
+        st.success(f"Successfully loaded {len(df)} transactions!")
         return df.sort_values('Date', ascending=False)
     
     except Exception as e:
-        st.error(f"Error loading data: {e}")
+        st.error(f"Error loading data: {type(e).__name__}: {e}")
         return pd.DataFrame()
 
 
