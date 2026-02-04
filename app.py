@@ -135,7 +135,8 @@ def load_budget_data(_client, spreadsheet_id: str) -> pd.DataFrame:
     | Date | Category | Type | Description | Amount |
     """
     try:
-        sheet = _client.open_by_key(spreadsheet_id).sheet1
+        spreadsheet = _client.open_by_key(spreadsheet_id)
+        sheet = spreadsheet.worksheet("Facts_New")  # Read from Facts_New tab
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
         
