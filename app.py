@@ -329,20 +329,22 @@ def render_header():
     """, unsafe_allow_html=True)
 
 
-def render_kpi_cards(df: pd.DataFrame, period_label: str):
+def render_kpi_cards(df: pd.DataFrame, full_df: pd.DataFrame, period_label: str):
     """Render the main KPI metric cards."""
+    # Period-based metrics
     total_income = df[df['Amount'] > 0]['Amount'].sum()
     total_expenses = abs(df[df['Amount'] < 0]['Amount'].sum())
-    net_balance = total_income - total_expenses
-    savings_rate = (net_balance / total_income * 100) if total_income > 0 else 0
+    savings_rate = (total_income - total_expenses) / total_income * 100 if total_income > 0 else 0
     
-    # Get current cash on hand (most recent BalanceEUR)
-    if 'BalanceEUR' in df.columns and len(df) > 0:
-        # Sort by date to get the most recent balance
-        sorted_df = df.sort_values('Date', ascending=False)
-        cash_on_hand = sorted_df['BalanceEUR'].iloc[0]
-    else:
-        cash_on_hand = 0
+    # All-time metrics (from full unfiltered data)
+    all_time_income = full_df[full_df['Amount'] > 0]['Amount'].sum()
+    all_time_expenses = abs(full_df[full_df['Amount'] < 0]['Amount'].sum())
+    all_time_net_balance = all_time_income - all_time_expenses
+    
+    # All-time Investments (Category = "Investments")
+    all_time_investments = abs(full_df[
+        (full_df['Category'] == 'Investments') & (full_df['Amount'] < 0)
+    ]['Amount'].sum())
     
     col1, col2, col3, col4, col5 = st.columns(5)
     
@@ -359,11 +361,11 @@ def render_kpi_cards(df: pd.DataFrame, period_label: str):
         )
     
     with col3:
-        delta_color = "normal" if net_balance >= 0 else "inverse"
+        delta_color = "normal" if all_time_net_balance >= 0 else "inverse"
         st.metric(
-            label="📊 Net Balance",
-            value=f"€{net_balance:,.2f}",
-            delta=f"{'Surplus' if net_balance >= 0 else 'Deficit'}",
+            label="📊 Net Balance (All Time)",
+            value=f"€{all_time_net_balance:,.2f}",
+            delta=f"{'Surplus' if all_time_net_balance >= 0 else 'Deficit'}",
             delta_color=delta_color
         )
     
@@ -377,8 +379,8 @@ def render_kpi_cards(df: pd.DataFrame, period_label: str):
     
     with col5:
         st.metric(
-            label="🏦 Cash on Hand",
-            value=f"€{cash_on_hand:,.2f}",
+            label="📈 Investments (All Time)",
+            value=f"€{all_time_investments:,.2f}",
         )
 
 
@@ -756,8 +758,8 @@ def main():
         st.warning("No transactions match your filters.")
         return
     
-    # Render KPIs
-    render_kpi_cards(filtered_df, period_label)
+    # Render KPIs (pass both filtered and full data)
+    render_kpi_cards(filtered_df, df, period_label)
     
     st.markdown("<br>", unsafe_allow_html=True)
     
