@@ -190,7 +190,16 @@ def load_budget_data(_client, spreadsheet_id: str) -> pd.DataFrame:
         elif 'Amount' in df.columns:
             df['Amount'] = df['Amount'].apply(parse_european_number)
         
-        # Convert BGN to EUR if needed
+        # Get Balance EUR (cash on hand)
+        if 'Balance EUR' in df.columns:
+            df['BalanceEUR'] = df['Balance EUR'].apply(parse_european_number)
+            # Convert BGN balance to EUR if needed
+            if convert_bgn_to_eur:
+                df['BalanceEUR'] = df['BalanceEUR'] / BGN_TO_EUR
+        else:
+            df['BalanceEUR'] = 0.0
+        
+        # Convert Amount BGN to EUR if needed
         if convert_bgn_to_eur:
             df['Amount'] = df['Amount'] / BGN_TO_EUR
         
@@ -209,7 +218,7 @@ def load_budget_data(_client, spreadsheet_id: str) -> pd.DataFrame:
         df = df[df['Amount'] != 0]
         
         # Select and reorder final columns
-        return df[['Date', 'Category', 'Type', 'Place', 'Amount']]
+        return df[['Date', 'Category', 'Type', 'Place', 'Amount', 'BalanceEUR']]
     
     try:
         spreadsheet = _client.open_by_key(spreadsheet_id)
@@ -263,29 +272,36 @@ def load_demo_data() -> pd.DataFrame:
     
     data = []
     start_date = datetime.now() - timedelta(days=180)
+    balance = 10000  # Starting balance
     
     for i in range(180):
         current_date = start_date + timedelta(days=i)
         
         # Monthly salary on 1st
         if current_date.day == 1:
+            amount = random.randint(4500, 5500)
+            balance += amount
             data.append({
                 'Date': current_date,
                 'Category': 'Salary',
                 'Type': 'Income',
                 'Place': 'Employer',
-                'Amount': random.randint(4500, 5500)
+                'Amount': amount,
+                'BalanceEUR': balance
             })
         
         # Random expenses
         if random.random() > 0.5:
             cat = random.choice(categories_expense)
+            amount = -random.randint(10, 300)
+            balance += amount
             data.append({
                 'Date': current_date,
                 'Category': cat,
                 'Type': 'Expense',
                 'Place': random.choice(places_expense),
-                'Amount': -random.randint(10, 300)
+                'Amount': amount,
+                'BalanceEUR': balance
             })
     
     df = pd.DataFrame(data)
@@ -320,17 +336,25 @@ def render_kpi_cards(df: pd.DataFrame, period_label: str):
     net_balance = total_income - total_expenses
     savings_rate = (net_balance / total_income * 100) if total_income > 0 else 0
     
-    col1, col2, col3, col4 = st.columns(4)
+    # Get current cash on hand (most recent BalanceEUR)
+    if 'BalanceEUR' in df.columns and len(df) > 0:
+        # Sort by date to get the most recent balance
+        sorted_df = df.sort_values('Date', ascending=False)
+        cash_on_hand = sorted_df['BalanceEUR'].iloc[0]
+    else:
+        cash_on_hand = 0
+    
+    col1, col2, col3, col4, col5 = st.columns(5)
     
     with col1:
         st.metric(
-            label=f"💵 Total Income ({period_label})",
+            label=f"💵 Income ({period_label})",
             value=f"€{total_income:,.2f}",
         )
     
     with col2:
         st.metric(
-            label=f"💸 Total Expenses ({period_label})",
+            label=f"💸 Expenses ({period_label})",
             value=f"€{total_expenses:,.2f}",
         )
     
@@ -349,6 +373,12 @@ def render_kpi_cards(df: pd.DataFrame, period_label: str):
             value=f"{savings_rate:.1f}%",
             delta=f"{'On track' if savings_rate >= 20 else 'Below target'}",
             delta_color="normal" if savings_rate >= 20 else "inverse"
+        )
+    
+    with col5:
+        st.metric(
+            label="🏦 Cash on Hand",
+            value=f"€{cash_on_hand:,.2f}",
         )
 
 
@@ -394,6 +424,52 @@ def render_trend_chart(df: pd.DataFrame):
         font=dict(family='DM Sans'),
         hovermode='x unified',
         legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def render_category_trend_chart(df: pd.DataFrame):
+    """Render expenses by category over time as line chart."""
+    expenses = df[df['Amount'] < 0].copy()
+    expenses['Amount'] = expenses['Amount'].abs()
+    expenses['Month'] = expenses['Date'].dt.to_period('M').astype(str)
+    
+    # Get top 8 categories by total spend
+    top_categories = expenses.groupby('Category')['Amount'].sum().nlargest(8).index.tolist()
+    expenses_top = expenses[expenses['Category'].isin(top_categories)]
+    
+    # Pivot to get monthly spend by category
+    monthly_by_cat = expenses_top.groupby(['Month', 'Category'])['Amount'].sum().reset_index()
+    monthly_by_cat = monthly_by_cat.sort_values('Month')
+    
+    # Color palette
+    colors = ['#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899', 
+              '#f43f5e', '#f97316', '#eab308']
+    
+    fig = go.Figure()
+    
+    for i, category in enumerate(top_categories):
+        cat_data = monthly_by_cat[monthly_by_cat['Category'] == category]
+        fig.add_trace(go.Scatter(
+            x=cat_data['Month'],
+            y=cat_data['Amount'],
+            name=category,
+            mode='lines+markers',
+            line=dict(color=colors[i % len(colors)], width=2),
+            marker=dict(size=6)
+        ))
+    
+    fig.update_layout(
+        title='Monthly Expenses by Category',
+        template='plotly_dark',
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font=dict(family='DM Sans'),
+        hovermode='x unified',
+        legend=dict(orientation='h', yanchor='bottom', y=-0.3, xanchor='center', x=0.5),
+        yaxis_title='Amount (€)',
+        xaxis_title=''
     )
     
     st.plotly_chart(fig, use_container_width=True)
@@ -451,20 +527,13 @@ def render_top_expenses(df: pd.DataFrame, n: int = 10):
         orientation='h',
         marker=dict(
             color=by_category['Amount'],
-            colorscale='Blues',
+            colorscale='Reds',
             line=dict(color='rgba(255,255,255,0.2)', width=1)
         ),
         text=[f'€{x:,.0f}' for x in by_category['Amount']],
         textposition='inside',
         textfont=dict(color='white', family='JetBrains Mono')
     ))
-
-    fig.update_traces(
-    text=by_category['Amount'],
-    textposition='inside',
-    textfont=dict(color='black'),
-    texttemplate='€%{x:,.0f}'
-    )
     
     fig.update_layout(
         title=f'Top {n} Expense Categories',
@@ -692,7 +761,7 @@ def main():
     
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # Charts row
+    # Charts row 1: Income vs Expenses + Category Breakdown
     col1, col2 = st.columns([2, 1])
     
     with col1:
@@ -701,15 +770,18 @@ def main():
     with col2:
         render_category_breakdown(filtered_df)
     
-    # Second row
-    col1, col2 = st.columns([1, 1])
+    # Charts row 2: Category Trend + Top Expenses
+    col1, col2 = st.columns([2, 1])
     
     with col1:
-        render_top_expenses(filtered_df)
+        render_category_trend_chart(filtered_df)
     
     with col2:
-        st.subheader("📋 Recent Transactions")
-        render_transactions_table(filtered_df)
+        render_top_expenses(filtered_df)
+    
+    # Transactions table
+    st.subheader("📋 Recent Transactions")
+    render_transactions_table(filtered_df)
     
     # Footer
     st.markdown("""
